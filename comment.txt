@@ -1,0 +1,33 @@
+I have heard the video recording
+
+As per my understanding,
+
+1. Prospects will be created in pardot and will be synced in salesforce
+3. Prospects will have parent accounts
+3. We have to update trigger 'LeadRoutingTrigger'
+4. When a lead is created in saleforce, we will find its parent account
+5. We will check its type
+	a. If type = Client, no owner is displyed on page, we have to get userId from field called 
+	   'credentialing sales executive',and assign lead to that user
+	b. If type = Prospect,account owner is displayed on page, 
+       Lead is to be assigned to userIds in field
+			a. Contract lifecycle sales executive
+			b. Credentialating sales executive
+			c. Supply chain sales executive
+	c. It there is no type/or lead does not have an account 
+		Assign lead to general queue
+		
+An automated email is to be send to the Sales person that lead owner has been changed.
+
+6. Acounts are created manually, we dont have to handle account creation
+
+7. We have to query for account by Account/Organizaion name 
+
+8. To avoid hardcoding, we need to create an object with lookup fields for user and region.
+   Please let me where we are going to use this object.
+   Because for retrieving user id to assign lead,we will query on its parent account.
+   
+9. And we will have to use GiHub.
+
+Please let me know, If I have interpreted the things correctly and correct me if I am wrong.
+Also send me credentials so that I can strat working on the same. 
