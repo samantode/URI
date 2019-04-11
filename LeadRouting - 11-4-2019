@@ -1,0 +1,410 @@
+public class LeadRoutingHandler {
+    public static Group generalQueue;
+    public static List<campaign> CampaignList ;
+    public static void LeadChecking(List<Lead> newLeadLst) {
+    // General Queue
+        generalQueue = [Select Id from Group where Type = 'Queue' AND Name = 'General' LIMIT 1];
+        assignLeadToUser(newLeadLst,generalQueue.Id);
+    }
+
+    /*
+     * This method assigns lead to user according to values populated in related account object 
+     */
+    public static void assignLeadToUser(List<Lead> newLeadLst,String generalQueueId) {
+        System.debug('\n**AssignLeadToUser CALLED');
+        List<String> organizationNames = new List<String>();
+        List<String> organizationWithState = new List<String>();
+        List<Lead> leadWithAccount = new List<Lead>();
+        List<Lead> leadWithoutAccount = new List<Lead>();
+        Map<String, String> leadEmailVsOrganization = new Map<String,String>();
+        Map<String, Account> organizationVsAccount = new Map<String,Account>();
+        Map<String, Account> organizationVsAccountExtact = new Map<String,Account>();
+        Map<String, Account> organizationVsAccountState = new Map<String,Account>();
+        Map<String, String> organizationVsStateCode = new Map<String, String>();
+
+        for (Lead leadRecord : newLeadLst) {
+            if (!String.isBlank(leadRecord.Company) && !String.isBlank(leadRecord.Source__c)) {
+                if(!String.isBlank(leadRecord.State)) {
+                  organizationNames.add(leadRecord.Company + ' (' + leadRecord.State + ')');   
+                }
+                else {
+                    organizationNames.add(leadRecord.Company);
+                }
+                leadEmailVsOrganization.put(leadRecord.Email+leadRecord.FirstName+leadRecord.LastName,
+                leadRecord.Company);
+            }
+        }
+
+        List<Account> relatedAccounts = [
+            SELECT  
+                Id,
+                Type,
+                Name,
+                Credentialing_Sales_Executive__c,
+                Contract_Lifecycle_Sales_Executive__c,
+                Supply_Chain_Sales_Executive__c,
+                Credentialing_Source__c,
+                Contract_Life_cycle_Source__c,
+                Supply_Chain_Source__c,
+                OwnerId,
+                Website
+            FROM
+                Account
+            WHERE
+                Name In :organizationNames
+        ];
+
+        System.debug('\nLead Records are :'+newLeadLst);
+        System.debug('\n**List of Organizations'+organizationNames);
+        System.debug('\n**Retrieved Accounts 1'+relatedAccounts);
+        System.debug('\nAccount Size 1 is'+relatedAccounts.size());
+        for (Account accountRecord : relatedAccounts) {
+            if(accountRecord.Name.contains('(')) {
+                Integer index = accountRecord.Name.IndexOf('(');
+                organizationVsAccount.put(accountRecord.Name.subString(0,index-1),accountRecord);
+            }
+            else {
+                organizationVsAccount.put(accountRecord.Name, accountRecord);
+            }
+        }
+
+        System.debug('\nFinal Map of Org Vs Account is '+organizationVsAccount);
+        System.debug('\nFinal Map of leadEmailVsOrganization is '+leadEmailVsOrganization);
+        
+        //Segregate leads with Account and without Account
+        for (Lead leadRecord : newLeadLst) {
+            System.debug('\nGetting Lead with and without org');
+            if (OrganizationVsAccount.containsKey(leadEmailVsOrganization.get(leadRecord.Email+leadRecord.FirstName+leadRecord.LastName))) {
+                leadWithAccount.add(leadRecord);
+            }
+            else {
+                leadRecord.Ownerid = generalQueueId;
+                leadRecord.Description = 'Lead Routing Could Not Determine Sales Rep';
+                leadWithoutAccount.add(leadRecord);
+            }
+        }
+        System.debug('\n***leadWithAccount'+leadWithAccount);
+
+        for (Lead leadRecord : leadWithAccount) {
+            Account relatedAccount = 
+                OrganizationVsAccount.get(leadEmailVsOrganization.get(leadRecord.Email+leadRecord.FirstName+leadRecord.LastName));
+            System.debug('\nRetrieved related Account'+relatedAccount);
+
+            //If Account type is Client
+            if (relatedAccount.Type == System.Label.ClientAccount) {
+                if((!String.isBlank(leadRecord.Source__c) && 
+                  leadRecord.Source__c.containsIgnoreCase(System.Label.CredentialingSource)) &&
+                  !String.isBlank(relatedAccount.Credentialing_Sales_Executive__c)
+                  ) {
+                    leadRecord.Ownerid = relatedAccount.Credentialing_Sales_Executive__c;
+                }
+                else {
+                    leadRecord.Ownerid = relatedAccount.OwnerId;
+                }
+            }
+
+            //If account type is prospect
+            else if (relatedAccount.Type == System.Label.ProspectAccount) {
+                if(
+                    (!String.isBlank(leadRecord.Source__c)) && 
+                  (
+                    leadRecord.Source__c.containsIgnoreCase(System.Label.ContractLifeCycleSource) &&
+                    leadRecord.Source__c.containsIgnoreCase(System.Label.CredentialingSource)
+                  ) &&
+                  !String.isBlank(relatedAccount.Credentialing_Sales_Executive__c) 
+                 ) {
+                        leadRecord.Ownerid = relatedAccount.Credentialing_Sales_Executive__c;
+                    }   
+                else if((!String.isBlank(leadRecord.Source__c) && 
+                  leadRecord.Source__c.containsIgnoreCase(System.Label.ContractLifeCycleSource)) &&
+                   !String.isBlank(relatedAccount.Contract_Lifecycle_Sales_Executive__c)
+                  ) {
+                        leadRecord.Ownerid = relatedAccount.Contract_Lifecycle_Sales_Executive__c;
+                    }
+                else if((!String.isBlank(leadRecord.Source__c) && 
+                  leadRecord.Source__c.containsIgnoreCase(System.Label.CredentialingSource)) &&
+                   !String.isBlank(relatedAccount.Credentialing_Sales_Executive__c) 
+                    ) {
+                        leadRecord.Ownerid = relatedAccount.Credentialing_Sales_Executive__c;
+                    }   
+                else if((!String.isBlank(leadRecord.Source__c) && 
+                  leadRecord.Source__c.containsIgnoreCase(System.Label.SupplyChainSource)) &&
+                   !String.isBlank(relatedAccount.Supply_Chain_Sales_Executive__c) 
+                    ) {
+                        leadRecord.Ownerid = relatedAccount.Supply_Chain_Sales_Executive__c;
+                       
+                    }
+                else {
+                    leadRecord.Ownerid = generalQueueId;
+                    leadRecord.Description = 'Lead Routing Could Not Determine Sales Rep';
+                }
+            }
+            //If account type is not client or prospect
+            else {
+                leadRecord.Ownerid = generalQueueId;
+                leadRecord.Description = 'Lead Routing Could Not Determine Sales Rep';
+            }
+        }
+
+        System.debug('Final Lead Records are Oner changes successfully');
+    }
+
+    /*
+     *  Description :
+     */    
+    public static void sendEmailNotification(List<Lead> lstLead) {
+    List<Messaging.SingleEmailMessage> mails = new List<Messaging.SingleEmailMessage>(); 
+        Emailtemplate objTemp = [select id,htmlvalue,subject From EmailTemplate where name='LeadEmailTemplate1'];    
+        set<id> setownerid = new set<id>();
+        map<id, string> mapuseridwithname = new map<id, string>();
+        for (Lead leadRec : lstLead) {
+            setownerid.add(leadrec.ownerid);
+        }
+        for(user objuser:[select id,name from user where id in:setownerid]){
+            mapuseridwithname.put(objuser.id, objuser.name);
+        }
+        for (Lead leadRec : lstLead) {
+             
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            mail.setSenderDisplayName('Email alert');
+            
+            mail.setTemplateId(objtemp.id);
+               string emailbody= objtemp.htmlvalue;
+              // user objuser=[select id,name from user where id=:leadrec.ownerid];
+               if(mapuseridwithname.get(leadrec.ownerid) != null)
+                   emailbody = emailbody.replace('username', mapuseridwithname.get(leadrec.ownerid));
+               else
+                   emailbody = emailbody.replace('username','');
+               if(leadrec.firstname!= null)
+                   emailbody = emailbody.replace('FirstName1', Leadrec.FirstName);
+               else
+                   emailbody = emailbody.replace('FirstName1', '');
+               if(leadrec.lastname!= null)
+                   emailbody = emailbody.replace('LastName1', Leadrec.LastName);
+               else
+                   emailbody = emailbody.replace('LastName1', '');
+                if(leadrec.Email != null)
+                   emailbody = emailbody.replace('Email1', Leadrec.Email);
+               else
+                   emailbody = emailbody.replace('Email1', '');   
+               //emailbody = emailbody.replace('Email1', Leadrec.Email);
+               if(leadrec.phone!= null)
+                   emailbody = emailbody.replace('Phone1', Leadrec.Phone);
+               else
+                   emailbody = emailbody.replace('Phone1', '');
+               if(leadrec.state != null)
+                   emailbody = emailbody.replace('State1', Leadrec.State);
+               else
+                   emailbody = emailbody.replace('State1', '');
+               if(leadrec.City!= null)
+                   emailbody = emailbody.replace('City1', Leadrec.City);
+               else
+                   emailbody = emailbody.replace('City1', '');
+                   //source
+                   if(leadrec.Source__c != null)
+                   emailbody = emailbody.replace('Source1', Leadrec.Source__c);
+               else
+                   emailbody = emailbody.replace('Source1', '');
+                   //source end
+               if(leadrec.Company!= null)
+                   emailbody = emailbody.replace('Organization1', Leadrec.Company);
+               else
+                   emailbody = emailbody.replace('Organization1', '');
+                  if(leadrec.Source__c != null  && leadrec.Source__c.Contains('https://www.tractmanager.com/contact-us')){
+                       if(leadrec.Message_field_on_Contact_Us__c != null)
+                           emailbody = emailbody.replace('Message1', Leadrec.Message_field_on_Contact_Us__c );
+                       else
+                           emailbody = emailbody.replace('Message1', '');
+                   }
+                   else{
+                       emailbody = emailbody.replace('Message1', '');
+                       emailbody = emailbody.replace('Message:', '');
+                   }
+                      
+               //emailbody = emailbody.replace('Organization1', Leadrec.Company);
+               
+               mail.setSubject(objtemp.subject);
+            mail.sethtmlbody(emailbody);
+            //mail.setWhatId(Lead.id);
+            /*mail.setSubject('Lead/Prospect Assignment');
+            String body = 'Hi ' + ',\nHere is the Lead assign to you :\n';
+            body +=  'Lead Info Table';
+            body += '<table id="table_id" class="display"><thead><tr><th>FirstName</th><th>LastName</th><th>Email</th><th>Phone</th><th>Company</th></tr></thead><tbody>';
+            
+                body += '<tr><td>';
+                body += leadRec.FirstName+'</td><td>';
+                body += leadRec.LastName+'</td><td>';
+                body += leadRec.Email+'</td><td>';
+                body += leadRec.Phone+'</td><td>';
+                body += leadRec.Company+'</td></tr>';
+            
+            body += '</tbody></table>';*/
+            // URL.getSalesforceBaseUrl()+'?id='+leadRec.Id+'\n'
+            
+            mail.setTargetObjectId(leadrec.ownerid); // update the id with userid
+            //mail.setToAddresses(new String[]{'test@test.com'});
+            //mail.setHtmlBody(body);
+            mail.setSaveAsActivity(false); 
+            mails.add(mail);         
+        
+        }
+        Messaging.sendEmail(mails);
+    }
+    public static void createCampaignMembers (List<Lead> leads) {
+        List<campaign> CampaignList = new list<campaign>();
+        CampaignList = [SELECT id,Name,Parent.Name FROM Campaign WHERE Name =: system.label.campaignname];
+        if(test.isrunningtest()){
+            CampaignList = [SELECT id,Name,Parent.Name FROM Campaign limit 1];
+        }
+        
+        System.debug('createCampaignMembers ');
+        if (leads != null && !leads.isEmpty() && campaignList != NULL && campaignList.size()>0) {
+            List<Id> leadIds = new List<Id>();          
+            
+            List<CampaignMember> campaignMembers = new List<CampaignMember>();
+           
+            
+            
+            for (Lead lead : leads) {
+                
+                    if(lead.Source__c != null && lead.Source__c.contains(system.label.sourcename)){                       
+                            
+                                campaignMembers.add(new campaignMember(LeadId = lead.Id, CampaignId = CampaignList[0].id));                              
+                        
+                    }
+                  
+                 
+                     
+            }
+            System.debug('campaignMembers '+ campaignMembers);
+            insert campaignMembers;
+        }
+    }
+    /*
+     *  Description :
+     */    
+    /*public static void createCampaignMembers (List<Lead> leads) {
+     List<campaign> CampaignList = [SELECT id,Name,Parent.Name FROM Campaign WHERE Parent.Name = 'MD Buyline' or Parent.Name = 'MediTract'];
+        
+        System.debug('createCampaignMembers ');
+        if (leads != null && !leads.isEmpty() && campaignList != NULL) {
+            List<Id> leadIds = new List<Id>();
+            List<Id> memberLeadIds = new List<Id>();
+            for (Lead lead : leads) {
+                leadIds.add(lead.Id);
+            }
+            for (CampaignMember member : [SELECT Id, LeadId, CampaignId FROM CampaignMember WHERE LeadId IN :leadIds]) {
+                memberLeadIds.add(member.LeadId);
+            }
+            List<CampaignMember> campaignMembers = new List<CampaignMember>();
+            List<Lead> notFoundLeadList = new List<Lead>();
+            
+            Map<String,String> metadataUrlMap =new Map<String,String>();
+            
+            For(MediTract_Prospect__mdt MdprosNames :[SELECT MasterLabel,Form_URL__c FROM MediTract_Prospect__mdt]){
+                metadataUrlMap.put(MdprosNames.Form_URL__c,MdprosNames.MasterLabel);
+              }
+            
+           For(Md_Buyline_Prospect__mdt MdbuyNames : [SELECT MasterLabel,Form_URL__c FROM Md_Buyline_Prospect__mdt]){
+                   metadataUrlMap.put(MdbuyNames.Form_URL__c,MdbuyNames.MasterLabel);
+             }
+           
+            
+            
+            for (Lead lead : leads) {
+                if (!memberLeadIds.contains(lead.Id)) {
+                    if(metadataUrlMap.containsKey(lead.Source__c)){
+                        For(Campaign Cobj:campaignList){
+                            if(Cobj.Name.Contains(metadataUrlMap.get(lead.Source__c))){
+                                campaignMembers.add(new campaignMember(LeadId = lead.Id, CampaignId = Cobj.id)); 
+                            }   
+                        }
+                    }
+                  }
+                 else{
+                        notFoundLeadList.add(lead);   
+                  }
+                     
+            }
+            System.debug('campaignMembers '+ campaignMembers);
+            insert campaignMembers;
+        }
+    }*/
+    public static void onAfterInsertHandler (List<Lead> newLeadLst) {
+        //CampaignList = [SELECT id,Name,Parent.Name FROM Campaign WHERE Parent.Name = 'MD Buyline' or Parent.Name = 'MediTract'];
+            
+         createCampaignMembers(newLeadLst);
+        
+        
+    }
+    /*
+     *  Description :
+     */    
+    public static void onAfterUpdateHandler (List<Lead> newLeadLst) {
+        //CampaignList = [SELECT id,Name,Parent.Name FROM Campaign WHERE Parent.Name = 'MD Buyline' or Parent.Name = 'MediTract'];
+            if(system.label.SendEmail=='Yes'){
+                sendEmailNotification(newLeadLst);
+            
+         //createCampaignMembers(newLeadLst,CampaignList);
+        
+        List<Task> tasks = createActivityForAccount(newLeadLst);
+        createLeadInfoAttachmentOnActivity(tasks, newLeadLst);
+        }
+    }
+    
+    /*
+     *  Description :
+     */    
+    public static List<Task> createActivityForAccount (List<Lead> leads) {
+            list<Task> lsttasks = new list<Task>();
+            for(Lead objLead :leads){
+                    Task leadInfoTask = new Task();
+                    leadInfoTask.WhoId = objlead.Id;
+                    if(objlead.Source__c != null && objlead.Source__c.contains(system.label.sourcename)){
+                        leadInfoTask.Subject = system.label.campaignname;
+                    }
+                    else{
+                        leadInfoTask.Subject = 'Email';
+                    }
+                    leadInfoTask.Priority = 'High';
+                    leadInfoTask.Status = 'Open';
+                    leadInfoTask.ActivityDate= Date.today().adddays(1);
+                    leadInfoTask.OwnerId = objlead.Ownerid;
+                    lsttasks.add(leadInfoTask);
+            
+        }
+        insert lsttasks;
+        return lsttasks;
+    }
+    
+    /*
+     *  Description :
+     */    
+    public static void createLeadInfoAttachmentOnActivity (List<Task> tasks, List<Lead> leads) {
+        System.debug('createLeadInfoAttachmentOnActivity ');
+        if (tasks != null && leads != null) {
+            
+            List<Attachment> attachments = new List<Attachment>();
+            for (Task taskRecord : tasks) {
+                Attachment attachment = new Attachment();
+                String body = '';
+                attachment.Name = String.valueOf('Web Form Lead Info.txt');
+                attachment.ParentId = taskRecord.Id; 
+                attachment.OwnerId = taskRecord.OwnerId;
+                for (Lead leadRecord : leads) {
+                    //if (accountMap.get(taskRecord.WhatId).Name.containsIgnoreCase(leadRecord.Company)) {
+                        body += 'Lead: ' + leadRecord.FirstName + ' ' + leadRecord.LastName + '\n' +
+                            'Email: ' + leadRecord.Email + '\n' +
+                            'Source: ' + leadRecord.Source__c + '\n\n';
+                    //}   
+                }
+                attachment.Body = Blob.valueOf(body);
+                attachments.add(attachment);
+            }
+            System.debug('attachments '+ attachments);
+            insert attachments;
+        }
+    }
+    
+    
+    }
